@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bulk Log</title>
+<style>
+  body{ margin:0; background:#1B1E24; color:#EDEEF0; font-family:sans-serif; padding:16px; }
+  h1{ font-size:24px; margin-bottom:4px; }
+  .sub{ color:#8A909B; font-size:12px; margin-bottom:16px; }
+  .totals{ display:flex; gap:10px; margin-bottom:16px; }
+  .box{ flex:1; background:#23272F; border:1px solid #363C47; border-radius:8px; padding:10px; }
+  .box .label{ font-size:11px; color:#8A909B; }
+  .box .val{ font-size:20px; font-weight:bold; }
+  .slot{ margin-bottom:14px; }
+  .slot-title{ font-size:12px; color:#E8963D; font-weight:bold; margin-bottom:6px; }
+  .item{ display:flex; align-items:center; gap:10px; background:#23272F; border:1px solid #363C47; border-radius:8px; padding:10px; margin-bottom:6px; }
+  .item.done{ background:#2A2F38; }
+  .item input{ width:20px; height:20px; }
+  .item .txt{ flex:1; font-size:14px; }
+  .item.done .txt{ color:#8A909B; text-decoration:line-through; }
+  .item .macro{ font-size:11px; color:#8A909B; }
+  .weightrow{ display:flex; gap:8px; margin:16px 0; }
+  .weightrow input{ flex:1; padding:8px; border-radius:6px; border:1px solid #363C47; background:#2A2F38; color:#fff; }
+  .weightrow button, .exportbtn{ background:#E8963D; border:none; border-radius:6px; padding:8px 14px; font-weight:bold; }
+  .exportbtn{ width:100%; margin-top:10px; background:#2A2F38; color:#fff; border:1px solid #363C47; padding:12px; }
+  .note{ font-size:11px; color:#8A909B; text-align:center; margin-top:20px; }
+</style>
+
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BulkLog">
+<meta name="theme-color" content="#1B1E24">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script>
+if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js'));}
+</script>
+
+</head>
+<body>
+
+<h1>BULKLOG</h1>
+<div class="sub" id="dateLabel"></div>
+
+<div class="totals">
+  <div class="box"><div class="label">CALORIES</div><div class="val"><span id="calNum">0</span> / 3000</div></div>
+  <div class="box"><div class="label">PROTEIN</div><div class="val"><span id="proNum">0</span>g / 135g</div></div>
+</div>
+
+<div id="meals"></div>
+
+<div class="weightrow">
+  <input type="number" step="0.1" id="weightInput" placeholder="Weight kg">
+  <button onclick="logWeight()">Log</button>
+</div>
+<div class="sub" id="weightLog"></div>
+
+<button class="exportbtn" onclick="exportCSV()">Export CSV (for Excel)</button>
+
+<div class="note">Resets daily. Tap items as you eat them.</div>
+
+<script>
+var MEALS = [
+  { time:"7:00 AM", name:"Morning", items:[
+    { id:"almonds", text:"7 soaked almonds", cal:50, pro:2 },
+    { id:"shake", text:"Shake - 2 banana + 30g oats + 250ml milk + 2 tbsp peanut butter", cal:620, pro:22 },
+    { id:"coffee", text:"Black coffee", cal:5, pro:0 }
+  ]},
+  { time:"1:00 PM", name:"Lunch", items:[
+    { id:"roti", text:"2 rotis + sabzi", cal:350, pro:9 },
+    { id:"daldrice", text:"Dal + rice", cal:400, pro:14 },
+    { id:"salad", text:"Salad", cal:40, pro:2 },
+    { id:"curd", text:"Full-fat curd/yogurt", cal:120, pro:6 }
+  ]},
+  { time:"4:30 PM", name:"Pre-workout", items:[
+    { id:"banana", text:"1 banana", cal:105, pro:1 },
+    { id:"dates", text:"5 dates", cal:115, pro:1 }
+  ]},
+  { time:"7:00 PM", name:"Post-workout (at gym)", items:[
+    { id:"pwsnack", text:"Boiled egg or roasted chana/peanuts", cal:90, pro:7 }
+  ]},
+  { time:"7:45 PM", name:"Home", items:[
+    { id:"milkpb", text:"1 glass milk + 1 tbsp peanut butter", cal:220, pro:9 }
+  ]},
+  { time:"9:00 PM", name:"Dinner", items:[
+    { id:"chicken", text:"1 grilled chicken leg quarter", cal:480, pro:48 },
+    { id:"pulao", text:"1 bowl veg pulao", cal:300, pro:6 },
+    { id:"milknight", text:"1 glass milk", cal:150, pro:8 }
+  ]}
+];
+var CAL_TARGET = 3000;
+var PRO_TARGET = 135;
+var checkedState = {};
+
+function todayKey(){
+  var d = new Date();
+  return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate();
+}
+
+function renderMeals(){
+  var container = document.getElementById('meals');
+  var html = '';
+  for(var s=0; s<MEALS.length; s++){
+    var slot = MEALS[s];
+    html += '<div class="slot"><div class="slot-title">' + slot.time + ' - ' + slot.name + '</div>';
+    for(var i=0; i<slot.items.length; i++){
+      var item = slot.items[i];
+      var done = checkedState[item.id] ? 'checked' : '';
+      var doneClass = checkedState[item.id] ? ' done' : '';
+      html += '<div class="item' + doneClass + '">' +
+        '<input type="checkbox" ' + done + ' onchange="toggleItem(\'' + item.id + '\')">' +
+        '<div class="txt">' + item.text + '</div>' +
+        '<div class="macro">' + item.cal + 'kcal ' + item.pro + 'g</div>' +
+        '</div>';
+    }
+    html += '</div>';
+  }
+  container.innerHTML = html;
+  updateTotals();
+}
+
+function updateTotals(){
+  var cal = 0, pro = 0;
+  for(var s=0; s<MEALS.length; s++){
+    for(var i=0; i<MEALS[s].items.length; i++){
+      var item = MEALS[s].items[i];
+      if(checkedState[item.id]){ cal += item.cal; pro += item.pro; }
+    }
+  }
+  document.getElementById('calNum').innerText = cal;
+  document.getElementById('proNum').innerText = pro;
+}
+
+function toggleItem(id){
+  checkedState[id] = !checkedState[id];
+  try{ localStorage.setItem('log_' + todayKey(), JSON.stringify(checkedState)); }catch(e){}
+  renderMeals();
+}
+
+function loadToday(){
+  document.getElementById('dateLabel').innerText = new Date().toDateString();
+  try{
+    var raw = localStorage.getItem('log_' + todayKey());
+    checkedState = raw ? JSON.parse(raw) : {};
+  }catch(e){ checkedState = {}; }
+  renderMeals();
+}
+
+function logWeight(){
+  var val = document.getElementById('weightInput').value;
+  if(!val){ return; }
+  try{ localStorage.setItem('weight_' + todayKey(), val); }catch(e){}
+  document.getElementById('weightInput').value = '';
+  loadWeightLog();
+}
+
+function loadWeightLog(){
+  var out = [];
+  for(var k in localStorage){
+    if(k.indexOf('weight_') === 0){
+      out.push(k.replace('weight_','') + ': ' + localStorage.getItem(k) + 'kg');
+    }
+  }
+  document.getElementById('weightLog').innerText = out.join(' | ');
+}
+
+function exportCSV(){
+  var rows = [['Date','Calories','Protein','Weight']];
+  for(var k in localStorage){
+    if(k.indexOf('log_') === 0){
+      var date = k.replace('log_','');
+      var state = {};
+      try{ state = JSON.parse(localStorage.getItem(k)); }catch(e){}
+      var cal = 0, pro = 0;
+      for(var s=0; s<MEALS.length; s++){
+        for(var i=0; i<MEALS[s].items.length; i++){
+          var item = MEALS[s].items[i];
+          if(state[item.id]){ cal += item.cal; pro += item.pro; }
+        }
+      }
+      var w = localStorage.getItem('weight_' + date) || '';
+      rows.push([date, cal, pro, w]);
+    }
+  }
+  var csv = rows.map(function(r){ return r.join(','); }).join('\n');
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'bulklog.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+loadToday();
+loadWeightLog();
+</script>
+
+</body>
+</html>
